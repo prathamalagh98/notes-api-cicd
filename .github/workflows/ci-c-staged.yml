@@ -1,0 +1,73 @@
+name: ci-c-staged
+on:
+  workflow_dispatch:
+    inputs:
+      inject_failure:
+        description: "Make the injected unit test fail (failure-detection scenario)"
+        type: boolean
+        default: false
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    env:
+      INJECT_FAILURE: ${{ inputs.inject_failure }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: m2-${{ github.workflow }}-${{ hashFiles('**/pom.xml') }}
+      - name: Unit tests
+        run: mvn -B test -Dgroups=unit
+
+  integration:
+    needs: unit
+    runs-on: ubuntu-latest
+    env:
+      SPRING_DATASOURCE_URL: jdbc:mysql://127.0.0.1:3306/testdb
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testdb
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Restore Maven repository
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.m2/repository
+          key: m2-${{ github.workflow }}-${{ hashFiles('**/pom.xml') }}
+      - name: Integration tests
+        run: mvn -B test -Dgroups=integration
+
+  image:
+    needs: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build container image (layer cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: app:${{ github.sha }}
+          cache-from: type=gha,scope=${{ github.workflow }}
+          cache-to: type=gha,mode=max,scope=${{ github.workflow }}

@@ -1,0 +1,39 @@
+name: ci-a-baseline
+on:
+  workflow_dispatch:
+    inputs:
+      inject_failure:
+        description: "Make the injected unit test fail (failure-detection scenario)"
+        type: boolean
+        default: false
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    env:
+      INJECT_FAILURE: ${{ inputs.inject_failure }}
+      SPRING_DATASOURCE_URL: jdbc:mysql://127.0.0.1:3306/testdb
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testdb
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Unit tests
+        run: mvn -B test -Dgroups=unit
+      - name: Integration tests
+        run: mvn -B test -Dgroups=integration
+      - name: Build container image (no cache)
+        run: docker build --no-cache -t app:${{ github.sha }} .
